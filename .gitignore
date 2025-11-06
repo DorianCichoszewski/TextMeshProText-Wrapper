@@ -1,0 +1,9 @@
+/*
+/*/
+
+!.gitignore
+!.editorconfig
+
+!/Assets/
+!/Packages
+!/ProjectSettings/
