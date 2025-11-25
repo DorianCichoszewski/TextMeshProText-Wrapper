@@ -1,202 +1,110 @@
-﻿using UnityEditor;
-using UnityEditor.EventSystems;
-using UnityEditor.SceneManagement;
+﻿using System.Collections.Generic;
+using UnityEditor;
+using UnityEditor.UIElements;
 using UnityEngine;
-using UnityEngine.EventSystems;
-using UnityEngine.UI;
+using UnityEngine.UIElements;
 
 namespace QDC.Text.Editor
 {
-    public static class TextWrapperEditor
+    [CustomEditor(typeof(TextWrapper), true)]
+    public class TextWrapperEditor : UnityEditor.Editor
     {
-        private const string kUILayerName = "UI";
-        
-        [MenuItem("GameObject/UI/Text Wrapper", false)]
-        public static void CreateTextWrapper(MenuCommand menuCommand)
+        public override VisualElement CreateInspectorGUI()
         {
-            var gameObject = ObjectFactory.CreateGameObject("Text", typeof(RectTransform));
-            StageUtility.PlaceGameObjectInCurrentStage(gameObject);
-            
-            var textWrapper = ObjectFactory.AddComponent<TextWrapper>(gameObject);
-            
-            PlaceUIElementRoot(gameObject, menuCommand);
-        }
+            var root = new VisualElement();
 
-#region From TMPro_CreateObjectMenu.cs
-        
-        private static void PlaceUIElementRoot(GameObject element, MenuCommand menuCommand)
-        {
-            GameObject parent = menuCommand.context as GameObject;
-            bool explicitParentChoice = true;
-            if (parent == null)
-            {
-                parent = GetOrCreateCanvasGameObject();
-                explicitParentChoice = false;
+            var defaultInspector = new VisualElement();
+            InspectorElement.FillDefaultInspector(defaultInspector, serializedObject, this);
+            root.Add(defaultInspector);
 
-                // If in Prefab Mode, Canvas has to be part of Prefab contents,
-                // otherwise use Prefab root instead.
-                PrefabStage prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
-                if (prefabStage != null && !prefabStage.IsPartOfPrefabContents(parent))
-                    parent = prefabStage.prefabContentsRoot;
-            }
+            var overrideSection = CreateOverrideSection();
+            root.Add(overrideSection);
 
-            if (parent.GetComponentsInParent<Canvas>(true).Length == 0)
-            {
-                // Create canvas under context GameObject,
-                // and make that be the parent which UI element is added under.
-                GameObject canvas = CreateNewUI();
-                Undo.SetTransformParent(canvas.transform, parent.transform, "");
-                parent = canvas;
-            }
-
-            GameObjectUtility.EnsureUniqueNameForSibling(element);
-
-            GameObjectUtility.SetParentAndAlign(element, parent);
-            if (!explicitParentChoice) // not a context click, so center in sceneview
-                SetPositionVisibleinSceneView(parent.GetComponent<RectTransform>(), element.GetComponent<RectTransform>());
-
-            // This call ensure any change made to created Objects after they where registered will be part of the Undo.
-            Undo.RegisterFullObjectHierarchyUndo(parent == null ? element : parent, "");
-
-            // We have to fix up the undo name since the name of the object was only known after reparenting it.
-            Undo.SetCurrentGroupName("Create " + element.name);
-
-            Selection.activeGameObject = element;
-        }
-        
-        private static void SetPositionVisibleinSceneView(RectTransform canvasRTransform, RectTransform itemTransform)
-        {
-            // Find the best scene view
-            SceneView sceneView = SceneView.lastActiveSceneView;
-
-            if (sceneView == null && SceneView.sceneViews.Count > 0)
-                sceneView = SceneView.sceneViews[0] as SceneView;
-
-            // Couldn't find a SceneView. Don't set position.
-            if (sceneView == null || sceneView.camera == null)
-                return;
-
-            // Create world space Plane from canvas position.
-            Camera camera = sceneView.camera;
-            Vector3 position = Vector3.zero;
-            Vector2 localPlanePosition;
-
-            if (RectTransformUtility.ScreenPointToLocalPointInRectangle(canvasRTransform, new Vector2(camera.pixelWidth / 2f, camera.pixelHeight / 2f), camera, out localPlanePosition))
-            {
-                // Adjust for canvas pivot
-                localPlanePosition.x = localPlanePosition.x + canvasRTransform.sizeDelta.x * canvasRTransform.pivot.x;
-                localPlanePosition.y = localPlanePosition.y + canvasRTransform.sizeDelta.y * canvasRTransform.pivot.y;
-
-                localPlanePosition.x = Mathf.Clamp(localPlanePosition.x, 0, canvasRTransform.sizeDelta.x);
-                localPlanePosition.y = Mathf.Clamp(localPlanePosition.y, 0, canvasRTransform.sizeDelta.y);
-
-                // Adjust for anchoring
-                position.x = localPlanePosition.x - canvasRTransform.sizeDelta.x * itemTransform.anchorMin.x;
-                position.y = localPlanePosition.y - canvasRTransform.sizeDelta.y * itemTransform.anchorMin.y;
-
-                Vector3 minLocalPosition;
-                minLocalPosition.x = canvasRTransform.sizeDelta.x * (0 - canvasRTransform.pivot.x) + itemTransform.sizeDelta.x * itemTransform.pivot.x;
-                minLocalPosition.y = canvasRTransform.sizeDelta.y * (0 - canvasRTransform.pivot.y) + itemTransform.sizeDelta.y * itemTransform.pivot.y;
-
-                Vector3 maxLocalPosition;
-                maxLocalPosition.x = canvasRTransform.sizeDelta.x * (1 - canvasRTransform.pivot.x) - itemTransform.sizeDelta.x * itemTransform.pivot.x;
-                maxLocalPosition.y = canvasRTransform.sizeDelta.y * (1 - canvasRTransform.pivot.y) - itemTransform.sizeDelta.y * itemTransform.pivot.y;
-
-                position.x = Mathf.Clamp(position.x, minLocalPosition.x, maxLocalPosition.x);
-                position.y = Mathf.Clamp(position.y, minLocalPosition.y, maxLocalPosition.y);
-            }
-
-            itemTransform.anchoredPosition = position;
-            itemTransform.localRotation = Quaternion.identity;
-            itemTransform.localScale = Vector3.one;
-        }
-        
-        public static GameObject GetOrCreateCanvasGameObject()
-        {
-            GameObject selectedGo = Selection.activeGameObject;
-
-            // Try to find a gameobject that is the selected GO or one if its parents.
-            Canvas canvas = (selectedGo != null) ? selectedGo.GetComponentInParent<Canvas>() : null;
-            if (IsValidCanvas(canvas))
-                return canvas.gameObject;
-
-            // No canvas in selection or its parents? Then use any valid canvas.
-            // We have to find all loaded Canvases, not just the ones in main scenes.
-            Canvas[] canvasArray = StageUtility.GetCurrentStageHandle().FindComponentsOfType<Canvas>();
-            for (int i = 0; i < canvasArray.Length; i++)
-                if (IsValidCanvas(canvasArray[i]))
-                    return canvasArray[i].gameObject;
-
-            // No canvas in the scene at all? Then create a new one.
-            return CreateNewUI();
-        }
-        
-        public static GameObject CreateNewUI()
-        {
-            // Root for the UI
-            var root = new GameObject("Canvas");
-            root.layer = LayerMask.NameToLayer(kUILayerName);
-            Canvas canvas = root.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            root.AddComponent<CanvasScaler>();
-            root.AddComponent<GraphicRaycaster>();
-
-            // Works for all stages.
-            StageUtility.PlaceGameObjectInCurrentStage(root);
-            bool customScene = false;
-            PrefabStage prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
-            if (prefabStage != null)
-            {
-                root.transform.SetParent(prefabStage.prefabContentsRoot.transform, false);
-                customScene = true;
-            }
-
-            Undo.RegisterCreatedObjectUndo(root, "Create " + root.name);
-
-            // If there is no event system add one...
-            // No need to place event system in custom scene as these are temporary anyway.
-            // It can be argued for or against placing it in the user scenes,
-            // but let's not modify scene user is not currently looking at.
-            if (!customScene)
-                CreateEventSystem(false, null);
             return root;
         }
 
-        private static void CreateEventSystem(bool select, GameObject parent)
+        private VisualElement CreateOverrideSection()
         {
-            var esys = Object.FindFirstObjectByType<EventSystem>();
-            if (esys == null)
-            {
-                var eventSystem = ObjectFactory.CreateGameObject("EventSystem");
-                GameObjectUtility.SetParentAndAlign(eventSystem, parent);
-                esys = ObjectFactory.AddComponent<EventSystem>(eventSystem);
-                InputModuleComponentFactory.AddInputModule(eventSystem);
+            var container = new VisualElement();
+            container.style.marginTop = 4;
 
-                Undo.RegisterCreatedObjectUndo(eventSystem, "Create " + eventSystem.name);
+            var textWrapper = (TextWrapper)target;
+            var text = textWrapper.TextMeshPro;
+            
+            if (!text)
+            {
+                if (!textWrapper.Prefab)
+                {
+                    container.Add(new Label("Wrapper requires TMPro text (UI) to work"));
+                    return container;
+                }
+
+                textWrapper.ResetText();
+                text = textWrapper.TextMeshPro;
+                if (!text)
+                {
+                    container.Add(new Label("Wrapper can't generate underlying text"));
+                    return container;
+                }
             }
 
-            if (select && esys != null)
+            var modifications = PrefabUtility.GetPropertyModifications(text);
+            List<PropertyModification> textModifications = new();
+
+            foreach (var modification in modifications)
             {
-                Selection.activeGameObject = esys.gameObject;
+                // Prefab refers to TextMeshProUGUI directly
+                if (modification.target != textWrapper.Prefab)
+                    continue;
+                
+                if (modification.propertyPath == "m_text")
+                    continue;
+
+                textModifications.Add(modification);
             }
+
+            if (textModifications.Count == 0)
+            {
+                container.Add(new Label("No relevant overrides detected"));
+                return container;
+            }
+            
+            // Show overrides in Foldout
+            var foldout = new Foldout
+            {
+                text = "Overrides",
+                value = false
+            };
+
+            foreach (var modification in textModifications)
+            {
+                foldout.Add(CreateOverrideRow(modification));
+            }
+            
+            container.Add(foldout);
+            return container;
         }
         
-        static bool IsValidCanvas(Canvas canvas)
+        private VisualElement CreateOverrideRow(PropertyModification mod)
         {
-            if (canvas == null || !canvas.gameObject.activeInHierarchy)
-                return false;
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.justifyContent = Justify.SpaceBetween;
+            row.style.paddingLeft = 8;
+            row.style.paddingRight = 8;
+            row.style.marginBottom = 2;
 
-            // It's important that the non-editable canvas from a prefab scene won't be rejected,
-            // but canvases not visible in the Hierarchy at all do. Don't check for HideAndDontSave.
-            if (EditorUtility.IsPersistent(canvas) || (canvas.hideFlags & HideFlags.HideInHierarchy) != 0)
-                return false;
+            var name = new Label(mod.propertyPath);
+            name.style.unityTextAlign = TextAnchor.MiddleLeft;
+            name.style.flexGrow = 1;
 
-            if (StageUtility.GetStageHandle(canvas.gameObject) != StageUtility.GetCurrentStageHandle())
-                return false;
+            var value = new Label(mod.value);
+            value.style.unityTextAlign = TextAnchor.MiddleRight;
 
-            return true;
+            row.Add(name);
+            row.Add(value);
+
+            return row;
         }
-        
-#endregion
     }
 }
